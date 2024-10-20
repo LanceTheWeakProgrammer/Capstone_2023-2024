@@ -27,7 +27,8 @@ class LoginRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'email' => ['required', 'string', 'email'],
+            'role' => ['required', 'string', 'in:user,technician,admin'], 
+            'credential' => ['required', 'string'], 
             'password' => ['required', 'string'],
         ];
     }
@@ -41,15 +42,32 @@ class LoginRequest extends FormRequest
     {
         $this->ensureIsNotRateLimited();
 
-        if (! Auth::attempt($this->only('email', 'password'), $this->boolean('remember'))) {
+        // Determine the login field based on role
+        $loginField = $this->getLoginField();
+
+        if (! Auth::attempt([$loginField => $this->input('credential'), 'password' => $this->input('password')])) {
             RateLimiter::hit($this->throttleKey());
 
             throw ValidationException::withMessages([
-                'email' => __('auth.failed'),
+                'credential' => __('auth.failed'),
             ]);
         }
 
         RateLimiter::clear($this->throttleKey());
+    }
+
+    protected function getLoginField(): string
+    {
+        switch ($this->input('role')) {
+            case 'technician':
+                return 'account_number';
+            case 'user':
+                return 'email';
+            case 'admin':
+                return 'username';
+            default:
+                return 'email'; 
+        }
     }
 
     /**
@@ -68,7 +86,7 @@ class LoginRequest extends FormRequest
         $seconds = RateLimiter::availableIn($this->throttleKey());
 
         throw ValidationException::withMessages([
-            'email' => trans('auth.throttle', [
+            'credential' => trans('auth.throttle', [
                 'seconds' => $seconds,
                 'minutes' => ceil($seconds / 60),
             ]),
@@ -80,6 +98,6 @@ class LoginRequest extends FormRequest
      */
     public function throttleKey(): string
     {
-        return Str::transliterate(Str::lower($this->input('email')).'|'.$this->ip());
+        return Str::transliterate(Str::lower($this->input('role') . '|' . $this->input('credential')).'|'.$this->ip());
     }
 }
