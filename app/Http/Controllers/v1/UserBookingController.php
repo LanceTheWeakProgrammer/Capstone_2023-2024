@@ -5,35 +5,37 @@ namespace App\Http\Controllers\v1;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\Booking;
-use App\Models\Guest;
 use App\Models\Service;
 use App\Models\UserProfile;
-use App\Models\VehicleDetail;
 use App\Models\Technician;
-use App\Mail\SendGuestTokenMail;
+use App\Models\Payment;
 use App\Mail\SendSuccessMail;
-use App\Mail\BookingTransferredMail;
 use App\Services\TwilioService;
+use App\Services\TechnicianService;
 use Illuminate\Support\Facades\Mail;
+use App\Notifications\BookingNotification;
 use Exception;
+use DateTime; 
 
 class UserBookingController extends Controller
 {
     protected $twilioService;
+    protected $technicianService;
 
-    public function __construct(TwilioService $twilioService)
+    public function __construct(TwilioService $twilioService, TechnicianService $technicianService)
     {
         $this->twilioService = $twilioService;
+        $this->technicianService = $technicianService;
     }
 
-    public function storeForRegisteredUser(Request $request)
+    public function store(Request $request)
     {
         try {
             $userProfile = auth()->user()->profile;
-
+    
             $validated = $request->validate([
                 'technician_id' => 'required|exists:technician_profiles,id',
-                'booking_date' => 'required|date',
+                'booking_date' => 'required|date|after:today',
                 'vehicle_id' => 'required|exists:vehicle_details,id',
                 'service_ids' => 'required|string',
                 'total_fee' => 'required|numeric',
@@ -41,8 +43,20 @@ class UserBookingController extends Controller
                 'attachments.*' => 'image|mimes:jpeg,png,jpg,gif|max:2048'
             ]);
     
+            $maxBookingDate = now()->addMonths(12); 
+
+            if (new DateTime($validated['booking_date']) > $maxBookingDate) {
+                return response()->json([
+                    'message' => 'The booking date must be within 12 months from today.'
+                ], 400);
+            }
+
             $service_ids = json_decode($request->service_ids, true);
-    
+
+            if (count($service_ids) === 0) {
+                return response()->json(['message' => 'At least one valid service is required.'], 400);
+            }
+
             $booking = Booking::create([
                 'user_id' => $userProfile->id,
                 'technician_id' => $request->technician_id,
@@ -55,9 +69,9 @@ class UserBookingController extends Controller
 
             foreach ($service_ids as $service_id) {
                 $serviceDetails = Service::findOrFail($service_id);
-                $booking->services()->attach($serviceDetails, ['service_fee' => 100]); 
+                $booking->services()->attach($serviceDetails, ['service_fee' => 100]);
             }
-    
+
             if ($request->hasFile('attachments')) {
                 foreach ($request->file('attachments') as $attachment) {
                     $randomNumber = mt_rand(1000000, 9999999);
@@ -67,12 +81,35 @@ class UserBookingController extends Controller
                 }
             }
 
-            Mail::to(auth()->user()->email)->queue(new SendSuccessMail($booking));
+            Payment::create([
+                'user_id' => $userProfile->id,
+                'booking_id' => $booking->id,
+                'amount' => $request->total_fee,
+                'currency' => 'PHP',
+                'status' => 'Not Paid', 
+                'payment_method' => null,
+                'transaction_id' => null,
+                'payment_date' => null,
+                'notes' => 'Payment is pending approval and confirmation.',
+            ]);
+    
+            $this->technicianService->manageQuota($request->technician_id);
 
+            $userProfile->user->notify(new BookingNotification($booking, "Booking created successfully, wait for approval.", 'created'));
+            $technician = Technician::findOrFail($request->technician_id);
+            $technician->user->notify(new BookingNotification($booking, "Someone has booked you.", 'created'));
+
+            // Send confirmation email to user
+            // Mail::to(auth()->user()->email)->queue(new SendSuccessMail($booking));
+
+            // Send SMS confirmation to user
+            // $this->twilioService->sendSMS($userProfile->phone_number, "Your booking has been created successfully.");
+    
             return response()->json([
                 'message' => 'Booking created successfully for registered user',
-                'booking' => $booking
+                'booking' => $booking,
             ], 201);
+    
         } catch (Exception $e) {
             return response()->json([
                 'message' => 'An error occurred while creating the booking for registered user.',
@@ -81,142 +118,12 @@ class UserBookingController extends Controller
         }
     }
     
-    public function storeForGuestUser(Request $request)
-    {
-        try {
-            $validated = $request->validate([
-                'guest_name' => 'required|string',
-                'guest_email' => 'required|email',
-                'guest_phone' => 'required|string',
-                'booking_date' => 'required|date',
-                'vehicle_id' => 'required|exists:vehicle_details,id', 
-                'service_ids' => 'required|string',
-                'total_fee' => 'required|numeric',
-                'additional_info' => 'nullable|string',
-            ]);
-    
-            $service_ids = json_decode($request->service_ids, true);
-            $booking_date = $request->booking_date;
-
-            $matchingTechnicians = Technician::whereHas('vehicleTypes', function($query) use ($request) {
-                    $query->where('vehicle_types.id', $request->vehicle_id);
-                })
-                ->whereHas('services', function($query) use ($service_ids) {
-                    $query->whereIn('service.id', $service_ids); 
-                })
-                ->whereDoesntHave('bookings', function($query) use ($booking_date) {
-                    $query->where('booking_date', $booking_date);
-                })
-                ->where('avail_status', true)
-                ->first();
-
-            $guest = Guest::create([
-                'guest_name' => $request->guest_name,
-                'guest_email' => $request->guest_email,
-                'guest_phone' => $request->guest_phone,
-                'guest_token' => $this->generateGuestToken(),
-            ]);
-    
-            Mail::to($guest->guest_email)->queue(new SendGuestTokenMail($guest, $guest->guest_token));
-
-            $booking = Booking::create([
-                'guest_id' => $guest->id,
-                'technician_id' => $matchingTechnicians ? $matchingTechnicians->id : null,
-                'vehicle_detail_id' => $request->vehicle_id,
-                'booking_date' => $request->booking_date,
-                'status' => 'Pending',
-                'total_fee' => $request->total_fee,
-                'additional_info' => $request->additional_info,
-            ]);
-
-            foreach ($service_ids as $service_id) {
-                $serviceDetails = Service::findOrFail($service_id);
-                $booking->services()->attach($serviceDetails, ['service_fee' => 0]);
-            }
-
-            // if (!empty($guest->guest_phone)) {
-            //     $this->twilioService->sendSMS($guest->guest_phone, "Your booking has been successfully created. Your guest token is {$guest->guest_token}.");
-            // }
-
-            if (!$matchingTechnicians) {
-                return response()->json([
-                    'message' => 'Booking created successfully. No technician has been assigned to your booking yet. We are actively working on assigning one and will notify you as soon as a technician is available.',
-                    'booking' => $booking,
-                ], 201);
-            }
-    
-            return response()->json([
-                'message' => 'Booking created successfully for guest user with assigned technician.',
-                'booking' => $booking,
-            ], 201);
-        } catch (Exception $e) {
-            return response()->json([
-                'message' => 'An error occurred while creating the booking for guest user.',
-                'error' => $e->getMessage(),
-            ], 500);
-        }
-    }
-     
     public function index()
-    {
-        try {
-            $bookings = Booking::with(['vehicleDetail', 'services', 'guest', 'user'])
-                ->orderBy('booking_date', 'desc')
-                ->get();
-
-            return response()->json([
-                'message' => 'All bookings retrieved successfully',
-                'bookings' => $bookings,
-            ], 200);
-        } catch (Exception $e) {
-            return response()->json([
-                'message' => 'An error occurred while retrieving the bookings.',
-                'error' => $e->getMessage()
-            ], 500);
-        }
-    }
-
-    public function transfer(Request $request)
-    {
-        try {
-            $validated = $request->validate([
-                'guest_token' => 'required|string|exists:guests,guest_token',
-                'user_id' => 'required|exists:user_profiles,id',
-            ]);
-    
-            $guest = Guest::where('guest_token', $request->guest_token)->firstOrFail();
-            $relatedGuests = Guest::where(function($query) use ($guest) {
-                $query->where('guest_email', $guest->guest_email)
-                      ->orWhere('guest_phone', $guest->guest_phone);
-            })->get();
-
-            $bookings = Booking::whereIn('guest_id', $relatedGuests->pluck('id'))->get();
-
-            $bookings->each(function ($booking) use ($request) {
-                $booking->update(['user_id' => $request->user_id, 'guest_id' => null]);
-            });
-
-            if ($guest->guest_email) {
-                Mail::to($guest->guest_email)->queue(new BookingTransferredMail($guest));
-            }
-
-            $relatedGuests->each->delete();
-    
-            return response()->json([
-                'message' => 'Guest bookings transferred successfully.',
-                'bookings' => $bookings,
-            ], 200);
-        } catch (Exception $e) {
-            return response()->json(['message' => 'Error transferring bookings.'], 500);
-        }
-    }
-    
-    public function show()
     {
         try {
             $user = auth()->user();
  
-            $bookings = Booking::with(['vehicleDetail', 'services', 'guest', 'technician'])
+            $bookings = Booking::with(['vehicleDetail', 'services', 'technician.ratings', 'payments'])
                 ->where('user_id', $user->profile->id) 
                 ->get();
     
@@ -227,6 +134,26 @@ class UserBookingController extends Controller
         } catch (Exception $e) {
             return response()->json([
                 'message' => 'An error occurred while retrieving the bookings.',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function show($id)
+    {
+        try {
+            $booking = Booking::with(['vehicleDetail.vehicleType', 'services', 'technician.user', 'payments', 'attachments', 'userProfile.user'])
+                ->where('id', $id)
+                ->where('user_id', auth()->user()->profile->id)
+                ->firstOrFail();
+
+            return response()->json([
+                'message' => 'Booking retrieved successfully',
+                'booking' => $booking,
+            ], 200);
+        } catch (Exception $e) {
+            return response()->json([
+                'message' => 'An error occurred while retrieving the booking.',
                 'error' => $e->getMessage(),
             ], 500);
         }
@@ -259,21 +186,64 @@ class UserBookingController extends Controller
             ], 500);
         }
     }
-    
-    private function generateGuestToken()
+
+    public function requestReschedule(Request $request, $bookingId)
     {
         try {
-            do {
-                $letters1 = strtoupper(substr(str_shuffle('ABCDEFGHIJKLMNOPQRSTUVWXYZ'), 0, 4));
-                $letters2 = strtoupper(substr(str_shuffle('ABCDEFGHIJKLMNOPQRSTUVWXYZ'), 0, 4));
-                $digits = mt_rand(1000, 9999);
-                $token = "{$letters1}-{$letters2}-{$digits}";
-            } while (Guest::where('guest_token', $token)->exists());
+            $booking = Booking::where('id', $bookingId)
+                              ->where('user_id', auth()->user()->profile->id)
+                              ->firstOrFail();
+    
+            if (!in_array($booking->status, ['Approved', 'In Progress', 'Rescheduled'])) {
+                return response()->json([
+                    'message' => 'Only approved, in progress, or rescheduled bookings can be rescheduled.'
+                ], 403);
+            }
 
-            return $token;
+            if ($booking->status === 'Reschedule Requested') {
+                return response()->json([
+                    'message' => 'A reschedule request has already been submitted. Please wait for it to be processed.'
+                ], 400);
+            }
+    
+            $validated = $request->validate([
+                'requested_date' => 'required|date|after:today'
+            ]);
+
+            $maxRescheduleDate = now()->addMonths(12); 
+
+            if (new DateTime($validated['requested_date']) > $maxRescheduleDate) {
+                return response()->json([
+                    'message' => 'The requested reschedule date must be within 12 months from today.'
+                ], 400);
+            }
+
+            $booking->justifications()->create([
+                'type' => 'Request Reschedule',
+                'requested_date' => $validated['requested_date'],
+                'justification' => $request->justification ?? null,
+            ]);
+
+            $booking->status = 'Reschedule Requested';
+            $booking->save();
+    
+            $technician = $booking->technician;
+            if ($technician && $technician->user) {
+                $technician->user->notify(new BookingNotification(
+                    $booking,
+                    "A reschedule request has been submitted by the user.",
+                    'reschedule_requested'
+                ));
+            }
+    
+            return response()->json([
+                'message' => 'Reschedule request submitted successfully.',
+                'requested_date' => $validated['requested_date']
+            ], 200);
+    
         } catch (Exception $e) {
             return response()->json([
-                'message' => 'An error occurred while generating the guest token.',
+                'message' => 'An error occurred while submitting the reschedule request.',
                 'error' => $e->getMessage()
             ], 500);
         }

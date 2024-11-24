@@ -122,22 +122,22 @@ class SettingsController extends Controller
     public function storeTeam(Request $request)
     {
         $validate = $request->validate([
-            'member_name' => 'required|string|max:255',
-            'member_role' => 'required|string|max:255',
-            'member_img' => 'required|image|mimes:jpeg,png,jpg,gif|max:2048', 
+            'memberName' => 'required|string|max:255',
+            'memberRole' => 'required|string|max:255',
+            'memberImg' => 'required|image|mimes:jpeg,png,jpg,gif|max:2048', 
         ]);
     
         try {
             $random_number = mt_rand(1000000, 9999999);
 
-            $image_name = 'IMG_' . $random_number . '.' . $request->file('member_img')->getClientOriginalExtension();
+            $image_name = 'IMG_' . $random_number . '.' . $request->file('memberImg')->getClientOriginalExtension();
     
-            $image_path = $request->file('member_img')->storeAs('images/team', $image_name, 'public');
+            $image_path = $request->file('memberImg')->storeAs('images/team', $image_name, 'public');
 
             $team_info = TeamInfo::create([
-                'member_name' => $validate['member_name'],
-                'member_role' => $validate['member_role'],
-                'member_img' => $image_path,
+                'memberName' => $validate['memberName'],
+                'memberRole' => $validate['memberRole'],
+                'memberImg' => $image_path,
             ]);
     
             return response()->json([
@@ -158,8 +158,8 @@ class SettingsController extends Controller
         try {
             $team_info = TeamInfo::findOrFail($id);
 
-            if ($team_info->member_img) {
-                Storage::disk('public')->delete($team_info->member_img);
+            if ($team_info->memberImg) {
+                Storage::disk('public')->delete($team_info->memberImg);
             }
 
             $team_info->delete();

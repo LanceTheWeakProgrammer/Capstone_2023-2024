@@ -12,29 +12,33 @@ class Booking extends Model
     protected $fillable = [
         'user_id',
         'technician_id',
-        'guest_id',
         'vehicle_detail_id',  
         'booking_date',
-        'rescheduled_date',
         'status',
+        'reference_number',
         'total_fee',
         'additional_info',
     ];
 
-    public function user()
+    public function userProfile()
     {
         return $this->belongsTo(UserProfile::class, 'user_id', 'id');
     }
-
+    
+    public function user()
+    {
+        return $this->belongsTo(User::class, 'user_id', 'id');
+    }
+    
     public function technician()
     {
         return $this->belongsTo(Technician::class, 'technician_id');
     }
 
-    public function guest()
-    {
-        return $this->belongsTo(Guest::class);
-    }
+    // public function guest()
+    // {
+    //     return $this->belongsTo(Guest::class);
+    // }
 
     public function vehicleDetail()
     {
@@ -46,13 +50,34 @@ class Booking extends Model
         return $this->belongsToMany(Service::class, 'services_selected')->withPivot('service_fee');
     }
 
-    public function materials()
-    {
-        return $this->belongsToMany(Material::class, 'materials_selected')->withPivot('quantity_used', 'total_material_cost');
-    }
-
     public function attachments()
     {
         return $this->hasMany(Attachment::class);
+    }
+
+    public function justifications()
+    {
+        return $this->hasMany(BookingJustification::class);
+    }
+
+    public function payments()
+    {
+        return $this->hasMany(Payment::class);
+    }
+
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::creating(function ($booking) {
+            $booking->reference_number = self::generateReferenceNumber();
+        });
+    }
+
+    private static function generateReferenceNumber(): string
+    {
+        $date = now()->format('Ymd'); 
+        $random = str_pad(mt_rand(1, 9999), 4, '0', STR_PAD_LEFT); 
+        return "BK-{$date}-{$random}";
     }
 }

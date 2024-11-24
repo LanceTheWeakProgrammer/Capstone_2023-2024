@@ -38,9 +38,9 @@ return new class extends Migration
             $table->date('date_of_birth')->nullable();
             $table->string('phone_number')->nullable();
             $table->string('address')->nullable();
+            $table->string('barangay')->nullable();
             $table->string('city')->nullable();
-            $table->string('state')->nullable();
-            $table->string('country')->nullable();
+            $table->string('province')->nullable();
             $table->string('zip_code')->nullable();
             $table->string('profile_image')->nullable();    
             $table->timestamps();

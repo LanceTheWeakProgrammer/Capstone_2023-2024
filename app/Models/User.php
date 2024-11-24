@@ -45,4 +45,28 @@ class User extends Authenticatable
         return $this->hasOne(UserProfile::class, 'user_id', 'id');
     }
 
+    public function sentMessages()
+    {
+        return $this->hasMany(Message::class, 'sender_id');
+    }
+
+    public function receivedMessages()
+    {
+        return $this->hasMany(Message::class, 'receiver_id');
+    }
+
+    public function allMessages()
+    {
+        return $this->sentMessages->merge($this->receivedMessages)->sortByDesc('created_at');
+    }
+
+    public function unreadMessages()
+    {
+        return $this->hasMany(Message::class, 'receiver_id')->whereNull('read_at');
+    }
+
+    public function payments()
+    {
+        return $this->hasMany(Payment::class);
+    }
 }

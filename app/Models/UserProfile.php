@@ -30,11 +30,16 @@ class UserProfile extends Model
 
     public function user()
     {
-        return $this->belongsTo(User::class);
+        return $this->belongsTo(User::class, 'user_id', 'id');
     }
 
     public function bookings()
     {
-        return $this->hasMany(Booking::class);
+        return $this->hasMany(Booking::class, 'user_id', 'id'); 
+    }
+
+    public function ratings()
+    {
+        return $this->hasMany(Rating::class, 'user_id');
     }
 }

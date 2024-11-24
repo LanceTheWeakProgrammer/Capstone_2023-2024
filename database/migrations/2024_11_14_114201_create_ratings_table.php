@@ -11,12 +11,12 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('guests', function (Blueprint $table) {
+        Schema::create('ratings', function (Blueprint $table) {
             $table->id();
-            $table->string('guest_name');
-            $table->string('guest_email');
-            $table->string('guest_phone');
-            $table->string('guest_token')->unique();
+            $table->foreignId('user_id')->constrained('user_profiles')->onDelete('cascade');
+            $table->foreignId('technician_id')->constrained('technician_profiles')->onDelete('cascade');
+            $table->tinyInteger('rating')->unsigned();
+            $table->text('feedback')->nullable();
             $table->timestamps();
         });
     }
@@ -26,6 +26,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('guests');
+        Schema::dropIfExists('ratings');
     }
 };

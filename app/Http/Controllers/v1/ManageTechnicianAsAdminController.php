@@ -16,10 +16,10 @@ class ManageTechnicianAsAdminController extends Controller
     public function index()
     {
         try {
-            $technicians = Technician::with(['vehicleTypes', 'services', 'user'])
+            $technicians = Technician::with(['vehicleTypes', 'services', 'user', 'ratings'])
                 ->where('is_removed', false)
                 ->get();
-
+    
             return response()->json([
                 'success' => true,
                 'data' => $technicians
@@ -99,11 +99,11 @@ class ManageTechnicianAsAdminController extends Controller
     public function show($id)
     {
         try {
-            $technician = Technician::with(['vehicleTypes', 'services', 'user'])->findOrFail($id);
-
+            $technician = Technician::with(['vehicleTypes', 'services', 'user', 'ratings.user'])->findOrFail($id);
+    
             $technician->vehicle_type_ids = $technician->vehicleTypes->pluck('id');
             $technician->service_ids = $technician->services->pluck('id');
-
+    
             return response()->json([
                 'success' => true,
                 'data' => $technician
@@ -114,7 +114,7 @@ class ManageTechnicianAsAdminController extends Controller
                 'message' => 'Failed to retrieve technician: ' . $e->getMessage()
             ], 500);
         }
-    }
+    }      
 
     public function update(Request $request)
     {

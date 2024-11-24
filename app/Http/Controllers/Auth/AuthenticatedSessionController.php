@@ -17,24 +17,22 @@ class AuthenticatedSessionController extends Controller
     public function store(LoginRequest $request): JsonResponse
     {
         $request->authenticate();
-
+        
         $user = Auth::user();
         $role = $user->role;
-
         $isFirstLogin = is_null($user->logged_in_at);
 
-        if ($isFirstLogin) {
+        if (!$isFirstLogin && $role !== 'technician') {
             $user->update(['logged_in_at' => Carbon::now()]);
         }
-
-        // Create token for the session
+    
         $token = $user->createToken('API Token for ' . $role)->plainTextToken;
-
+    
         return response()->json([
             'message' => 'Login successful',
             'user' => [
                 'id' => $user->id,
-                'profile_id' => $user->profile()->pluck('id')->first(), 
+                'profile_id' => $role === 'admin' ? null : ($role === 'technician' ? $user->technicianProfile?->id : $user->profile?->id),
                 'is_first_login' => $isFirstLogin, 
             ],
             'role' => $role,

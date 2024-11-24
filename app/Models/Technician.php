@@ -43,4 +43,9 @@ class Technician extends Model
     {
         return $this->hasMany(Booking::class);
     }
+
+    public function ratings()
+    {
+        return $this->hasMany(Rating::class, 'technician_id');
+    }
 }
